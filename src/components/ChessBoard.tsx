@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Chessboard } from 'react-chessboard';
 import { Chess } from 'chess.js';
-import { ChessGame } from '../types/chess';
+import type { ChessGame } from '../types/chess';
 
 interface ChessBoardProps {
   game?: ChessGame;
@@ -86,22 +86,79 @@ export const ChessBoardComponent: React.FC<ChessBoardProps> = ({
     }
   }, [game, detectUserColor]);
 
-  const goToMove = useCallback((moveIndex: number) => {
-    if (!game || moveIndex < 0 || moveIndex > moveHistory.length) return;
+  const goToMove = useCallback((moveIndex: number, variationIndex?: number) => {
+    if (moveIndex < 0) return;
     
     const newGame = new Chess();
     try {
-      newGame.loadPgn(game.pgn);
-      const moves = newGame.history();
+      let moves: string[] = [];
+      let maxMoveIndex = 0;
+      
+      if (game) {
+        // Game is loaded, use PGN
+        newGame.loadPgn(game.pgn);
+        moves = newGame.history();
+        maxMoveIndex = moves.length;
+      } else {
+        // No game loaded, use manual move history
+        moves = moveHistory;
+        maxMoveIndex = moveHistory.length;
+      }
+      
+      // Check if we're navigating to a variation
+      if (variationIndex !== undefined && variationIndex < variations.length) {
+        const variation = variations[variationIndex];
+        const variationMoves = variation.moves;
+        const variationMoveIndex = moveIndex - variation.moveIndex;
+        
+        if (variationMoveIndex >= 0 && variationMoveIndex <= variationMoves.length) {
+          // Navigate within the variation
+          const gameAtMove = new Chess();
+          
+          // Play moves up to the variation starting point
+          for (let i = 0; i < variation.moveIndex; i++) {
+            if (i < moves.length) {
+              gameAtMove.move(moves[i]);
+            }
+          }
+          
+          // Play variation moves
+          for (let i = 0; i < variationMoveIndex; i++) {
+            if (i < variationMoves.length) {
+              gameAtMove.move(variationMoves[i]);
+            }
+          }
+          
+          setGamePosition(gameAtMove.fen());
+          setChessGame(gameAtMove);
+          setCurrentMoveIndex(moveIndex);
+          setIsInVariation(true);
+          setCurrentVariationIndex(variationIndex);
+          
+          if (onMoveIndexChange) {
+            onMoveIndexChange(moveIndex);
+          }
+          return;
+        }
+      }
+      
+      // Standard navigation in main line
+      if (moveIndex > maxMoveIndex) return;
       
       const gameAtMove = new Chess();
       for (let i = 0; i < moveIndex; i++) {
-        gameAtMove.move(moves[i]);
+        if (i < moves.length) {
+          gameAtMove.move(moves[i]);
+        }
       }
       
       setGamePosition(gameAtMove.fen());
       setChessGame(gameAtMove);
       setCurrentMoveIndex(moveIndex);
+      
+      // Reset variation state when returning to main line
+      setIsInVariation(false);
+      setCurrentVariationIndex(null);
       
       // Notify parent component of move index change
       if (onMoveIndexChange) {
@@ -110,12 +167,43 @@ export const ChessBoardComponent: React.FC<ChessBoardProps> = ({
     } catch (error) {
       console.error('Error navigating to move:', error);
     }
-  }, [game, moveHistory, onMoveIndexChange]);
+  }, [game, moveHistory, variations, onMoveIndexChange]);
 
   const goToStart = useCallback(() => goToMove(0), [goToMove]);
-  const goToEnd = useCallback(() => goToMove(moveHistory.length), [goToMove, moveHistory.length]);
+  const goToEnd = useCallback(() => {
+    if (isInVariation && currentVariationIndex !== null) {
+      const variation = variations[currentVariationIndex];
+      goToMove(variation.moveIndex + variation.moves.length, currentVariationIndex);
+    } else {
+      goToMove(moveHistory.length);
+    }
+  }, [goToMove, moveHistory.length, isInVariation, currentVariationIndex, variations]);
+  
   const goToPrevious = useCallback(() => goToMove(currentMoveIndex - 1), [goToMove, currentMoveIndex]);
-  const goToNext = useCallback(() => goToMove(currentMoveIndex + 1), [goToMove, currentMoveIndex]);
+  const goToNext = useCallback(() => {
+    if (isInVariation && currentVariationIndex !== null) {
+      const variation = variations[currentVariationIndex];
+      const maxVariationMove = variation.moveIndex + variation.moves.length;
+      if (currentMoveIndex < maxVariationMove) {
+        goToMove(currentMoveIndex + 1, currentVariationIndex);
+      }
+    } else {
+      goToMove(currentMoveIndex + 1);
+    }
+  }, [goToMove, currentMoveIndex, isInVariation, currentVariationIndex, variations]);
+  
+  const goToMainLine = useCallback(() => {
+    if (isInVariation) {
+      goToMove(currentMoveIndex);
+    }
+  }, [goToMove, currentMoveIndex, isInVariation]);
+  
+  const goToVariation = useCallback((variationIndex: number) => {
+    if (variationIndex < variations.length) {
+      const variation = variations[variationIndex];
+      goToMove(variation.moveIndex, variationIndex);
+    }
+  }, [goToMove, variations]);
 
   // Sync with external move index
   React.useEffect(() => {
@@ -128,12 +216,32 @@ export const ChessBoardComponent: React.FC<ChessBoardProps> = ({
     setBoardOrientation(prev => prev === 'white' ? 'black' : 'white');
   }, []);
 
+  // Function to reset board to starting position
+  const resetBoard = useCallback(() => {
+    const startingGame = new Chess();
+    setChessGame(startingGame);
+    setGamePosition(startingGame.fen());
+    setCurrentMoveIndex(0);
+    setMoveHistory([]);
+    setVariations([]);
+    setIsInVariation(false);
+    setCurrentVariationIndex(null);
+    
+    // Notify parent component
+    if (onMoveIndexChange) {
+      onMoveIndexChange(0);
+    }
+    if (onMoveHistoryChange) {
+      onMoveHistoryChange([]);
+    }
+    if (onVariationsChange) {
+      onVariationsChange([]);
+    }
+  }, [onMoveIndexChange, onMoveHistoryChange, onVariationsChange]);
+
   // Global keyboard navigation
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Only work when a game is loaded
-      if (!game) return;
-      
       // Don't interfere with typing in input fields, textareas, or content-editable elements
       const activeElement = document.activeElement;
       if (
@@ -174,6 +282,27 @@ export const ChessBoardComponent: React.FC<ChessBoardProps> = ({
           event.preventDefault();
           goToEnd();
           break;
+        case 'Escape':
+          event.preventDefault();
+          resetBoard();
+          break;
+        case 'm':
+        case 'M':
+          event.preventDefault();
+          goToMainLine();
+          break;
+        case '1':
+          event.preventDefault();
+          goToVariation(0);
+          break;
+        case '2':
+          event.preventDefault();
+          goToVariation(1);
+          break;
+        case '3':
+          event.preventDefault();
+          goToVariation(2);
+          break;
       }
     };
 
@@ -181,7 +310,7 @@ export const ChessBoardComponent: React.FC<ChessBoardProps> = ({
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [game, goToPrevious, goToNext, goToStart, goToEnd, rotateBoard]);
+  }, [goToPrevious, goToNext, goToStart, goToEnd, rotateBoard, resetBoard, goToMainLine, goToVariation]);
 
   const onDrop = useCallback((sourceSquare: string, targetSquare: string) => {
     const gameCopy = new Chess(chessGame.fen());
@@ -238,13 +367,48 @@ export const ChessBoardComponent: React.FC<ChessBoardProps> = ({
             }
             return updated;
           });
-        } else if (!game) {
-          // No game loaded, just add to move history
-          const newHistory = [...moveHistory.slice(0, currentMoveIndex), moveNotation];
-          setMoveHistory(newHistory);
-          if (onMoveHistoryChange) {
-            onMoveHistoryChange(newHistory);
+        } else if (!game && !isInVariation) {
+          // No game loaded - check if this move differs from the main line
+          if (currentMoveIndex < moveHistory.length && moveHistory[currentMoveIndex] !== moveNotation) {
+            // Create a new variation
+            const newVariation = {
+              moveIndex: currentMoveIndex,
+              moves: [moveNotation]
+            };
+            setVariations(prev => {
+              const updated = [...prev, newVariation];
+              if (onVariationsChange) {
+                onVariationsChange(updated);
+              }
+              return updated;
+            });
+            setIsInVariation(true);
+            setCurrentVariationIndex(variations.length);
+          } else if (currentMoveIndex >= moveHistory.length) {
+            // Extending beyond the main line
+            const newHistory = [...moveHistory, moveNotation];
+            setMoveHistory(newHistory);
+            if (onMoveHistoryChange) {
+              onMoveHistoryChange(newHistory);
+            }
+          } else {
+            // Following the main line
+            const newHistory = [...moveHistory.slice(0, currentMoveIndex), moveNotation];
+            setMoveHistory(newHistory);
+            if (onMoveHistoryChange) {
+              onMoveHistoryChange(newHistory);
+            }
           }
+        } else if (!game && isInVariation && currentVariationIndex !== null) {
+          // Continue in current variation for manual moves
+          setVariations(prev => {
+            const updated = [...prev];
+            updated[currentVariationIndex].moves.push(moveNotation);
+            if (onVariationsChange) {
+              onVariationsChange(updated);
+            }
+            return updated;
+          });
         }
         
         setGamePosition(gameCopy.fen());
@@ -357,7 +521,70 @@ export const ChessBoardComponent: React.FC<ChessBoardProps> = ({
           
           <div className="keyboard-help">
             <small>
-              Global Shortcuts: ← Previous | → Next | ↓ Start | ↑ End | R Rotate
+              Global Shortcuts: ← Previous | → Next | ↓ Start | ↑ End | R Rotate | Esc Reset | M Main Line | 1-3 Variations
+            </small>
+          </div>
+        </div>
+      )}
+      
+      {!game && (
+        <div className="no-game-controls">
+          <div className="move-controls">
+            <button onClick={goToStart} disabled={currentMoveIndex === 0}>
+              ⏮️ Start
+            </button>
+            <button onClick={goToPrevious} disabled={currentMoveIndex === 0}>
+              ⏪ Previous
+            </button>
+            <button onClick={goToNext} disabled={
+              isInVariation && currentVariationIndex !== null
+                ? currentMoveIndex >= (variations[currentVariationIndex].moveIndex + variations[currentVariationIndex].moves.length)
+                : currentMoveIndex >= moveHistory.length
+            }>
+              ⏩ Next
+            </button>
+            <button onClick={goToEnd} disabled={
+              isInVariation && currentVariationIndex !== null
+                ? currentMoveIndex >= (variations[currentVariationIndex].moveIndex + variations[currentVariationIndex].moves.length)
+                : currentMoveIndex >= moveHistory.length
+            }>
+              ⏭️ End
+            </button>
+            <button onClick={rotateBoard} className="rotate-btn">
+              🔄 Rotate
+            </button>
+            <button onClick={resetBoard} className="reset-btn">
+              🔄 Reset
+            </button>
+          </div>
+          
+          <div className="move-counter">
+            Move {currentMoveIndex} of {isInVariation && currentVariationIndex !== null 
+              ? variations[currentVariationIndex].moveIndex + variations[currentVariationIndex].moves.length
+              : moveHistory.length}
+            {isInVariation && <span className="variation-indicator"> (Variation {(currentVariationIndex || 0) + 1})</span>}
+          </div>
+          
+          {variations.length > 0 && (
+            <div className="variations-controls">
+              <button onClick={goToMainLine} disabled={!isInVariation}>
+                📖 Main Line
+              </button>
+              {variations.map((variation, index) => (
+                <button 
+                  key={index}
+                  onClick={() => goToVariation(index)}
+                  className={currentVariationIndex === index ? 'active' : ''}
+                >
+                  🔀 Variation {index + 1} ({variation.moves.length} moves)
+                </button>
+              ))}
+            </div>
+          )}
+          
+          <div className="keyboard-help">
+            <small>
+              Global Shortcuts: ← Previous | → Next | ↓ Start | ↑ End | R Rotate | Esc Reset | M Main Line | 1-3 Variations
             </small>
           </div>
         </div>
