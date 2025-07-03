@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Export Functionality</title>
+</head>
+<body>
+    <h1>Test Export Functionality</h1>
+    <button onclick="testExport()">Test Export</button>
+    
+    <script>
+        function testExport() {
+            // Test the exact same approach as the GameStorage service
+            const testData = {
+                username: 'testuser',
+                downloadDate: new Date().toISOString(),
+                gamesCount: 2,
+                games: [
+                    {
+                        id: 'test1',
+                        white: 'Player1',
+                        black: 'Player2',
+                        result: '1-0',
+                        date: '2024-01-01'
+                    },
+                    {
+                        id: 'test2',
+                        white: 'Player3',
+                        black: 'Player4',
+                        result: '0-1',
+                        date: '2024-01-02'
+                    }
+                ]
+            };
+            
+            const pgnData = '[Event "Test Game 1"]\n[White "Player1"]\n[Black "Player2"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 1-0\n\n[Event "Test Game 2"]\n[White "Player3"]\n[Black "Player4"]\n[Result "0-1"]\n\n1. d4 d5 2. c4 c6 3. Nc3 Nf6 4. Nf3 dxc4 0-1';
+            
+            // Save to localStorage
+            localStorage.setItem('games_testuser', JSON.stringify(testData));
+            localStorage.setItem('pgn_testuser', pgnData);
+            
+            // Test export
+            const gamesData = localStorage.getItem('games_testuser');
+            const pgnDataStored = localStorage.getItem('pgn_testuser');
+            
+            console.log('Games data found:', !!gamesData);
+            console.log('PGN data found:', !!pgnDataStored);
+            
+            if (gamesData) {
+                // Download JSON file
+                const jsonBlob = new Blob([gamesData], { type: 'application/json' });
+                const jsonUrl = URL.createObjectURL(jsonBlob);
+                const jsonLink = document.createElement('a');
+                jsonLink.href = jsonUrl;
+                jsonLink.download = 'testuser_games.json';
+                jsonLink.click();
+                URL.revokeObjectURL(jsonUrl);
+                console.log('JSON file download triggered');
+            }
+            
+            if (pgnDataStored) {
+                // Download PGN file
+                const pgnBlob = new Blob([pgnDataStored], { type: 'text/plain' });
+                const pgnUrl = URL.createObjectURL(pgnBlob);
+                const pgnLink = document.createElement('a');
+                pgnLink.href = pgnUrl;
+                pgnLink.download = 'testuser_games.pgn';
+                pgnLink.click();
+                URL.revokeObjectURL(pgnUrl);
+                console.log('PGN file download triggered');
+            }
+        }
+    </script>
+</body>
+</html>
